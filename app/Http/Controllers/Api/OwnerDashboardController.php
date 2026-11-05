@@ -30,7 +30,11 @@ class OwnerDashboardController extends Controller
         $end   = $request->end_date   ? Carbon::parse($request->end_date)->endOfDay()     : Carbon::today()->endOfDay();
 
         $orders = Order::whereBetween('created_at', [$start, $end])
-            ->whereIn('status', ['COMPLETE', 'ON_DELIVERY'])
+            ->where('status', 'COMPLETE')
+            ->get();
+
+        $pendingOrders = Order::whereBetween('created_at', [$start, $end])
+            ->whereIn('status', ['READY', 'ON_DELIVERY'])
             ->get();
 
         $pemasukan = $orders->groupBy(fn($o) => is_object($o->payment_type) ? $o->payment_type->value : $o->payment_type)
@@ -39,11 +43,21 @@ class OwnerDashboardController extends Controller
         $kasKasir = CashBalance::where('type', 'CASHIER')->first()->balance ?? 0;
         $kasBesar = CashBalance::where('type', 'MAIN')->first()->balance ?? 0;
 
+        // Hitung pesanan menggantung yang lebih dari 3 hari lalu
+        $cutoffOld = Carbon::now()->subDays(3)->startOfDay();
+        $oldIncompleteOrders = Order::where('created_at', '<', $cutoffOld)
+            ->whereNotIn('status', ['COMPLETE', 'CANCELLED'])
+            ->get();
+
         return response()->json([
             'success' => true,
             'periode' => ['start' => $start->format('Y-m-d'), 'end' => $end->format('Y-m-d')],
-            'omzet'   => (int) $orders->sum('total_amount'),
-            'total_order' => $orders->count(),
+            'omzet'         => (int) $orders->sum('total_amount'),
+            'total_order'   => $orders->count(),
+            'pending_omzet' => (int) $pendingOrders->sum('total_amount'),
+            'pending_order' => $pendingOrders->count(),
+            'old_incomplete_count'  => $oldIncompleteOrders->count(),
+            'old_incomplete_amount' => (int) $oldIncompleteOrders->sum('total_amount'),
             'pemasukan' => [
                 'tunai'    => (int) ($pemasukan['TUNAI'] ?? 0),
                 'qris'     => (int) ($pemasukan['QRIS'] ?? 0),
@@ -51,9 +65,56 @@ class OwnerDashboardController extends Controller
                 'corporate'=> (int) ($pemasukan['CORPORATE'] ?? 0),
                 'total'    => (int) $pemasukan->sum(),
             ],
-            'kas_kasir' => (int) $kasKasir,
-            'kas_besar' => (int) $kasBesar,
-            'total_kas' => (int) ($kasKasir + $kasBesar),
+            'kas_kasir'               => (int) $kasKasir,
+            'kas_besar'               => (int) $kasBesar,
+            'current_drawer_balance'  => (int) $kasKasir,
+            'current_owner_balance'   => (int) $kasBesar,
+            'total_kas'               => (int) ($kasKasir + $kasBesar),
+        ]);
+    }
+
+    // 1.5 BULK COMPLETE PESANAN LAMA (> 3 HARI LALU)
+    public function bulkCompleteOldOrders(Request $request)
+    {
+        $user = $request->user();
+        if (!in_array($user->role, ['owner', 'admin'])) {
+            return response()->json(['success' => false, 'message' => 'Akses ditolak'], 403);
+        }
+
+        $days = (int) ($request->days ?? 3);
+        $cutoff = Carbon::now()->subDays($days)->startOfDay();
+
+        $orders = Order::where('created_at', '<', $cutoff)
+            ->whereNotIn('status', ['COMPLETE', 'CANCELLED'])
+            ->get();
+
+        $count = $orders->count();
+        if ($count === 0) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Tidak ada pesanan menggantung yang lebih dari ' . $days . ' hari lalu.',
+                'completed_count' => 0,
+                'completed_amount' => 0,
+            ]);
+        }
+
+        $totalAmount = (int) $orders->sum('total_amount');
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($orders) {
+            $now = Carbon::now();
+            foreach ($orders as $order) {
+                $order->update([
+                    'status'         => 'COMPLETE',
+                    'completed_time' => $now,
+                ]);
+            }
+        });
+
+        return response()->json([
+            'success'          => true,
+            'message'          => "Berhasil menyelesaikan {$count} pesanan lama (> {$days} hari lalu)!",
+            'completed_count'  => $count,
+            'completed_amount' => $totalAmount,
         ]);
     }
 
@@ -75,28 +136,38 @@ class OwnerDashboardController extends Controller
         $end   = Carbon::parse($request->end_date)->endOfDay();
 
         $orderTrans = Order::whereBetween('created_at', [$start, $end])
-            ->whereIn('status', ['COMPLETE', 'ON_DELIVERY'])
+            ->where('status', 'COMPLETE')
             ->select('created_at', 'total_amount', 'payment_type', 'order_number')
             ->get()
             ->map(fn($o) => [
-                'waktu'       => $o->created_at,
-                'tipe'        => 'Pemasukan',
-                'jumlah'      => (int) $o->total_amount,
-                'keterangan'  => "Order #{$o->order_number}",
-                'kategori'    => is_object($o->payment_type) ? $o->payment_type->value : $o->payment_type,
-                'oleh'        => '-',
+                'waktu'           => $o->created_at,
+                'tipe'            => 'Pemasukan',
+                'jumlah'          => (int) $o->total_amount,
+                'keterangan'      => "Order #{$o->order_number}",
+                'kategori'        => is_object($o->payment_type) ? $o->payment_type->value : $o->payment_type,
+                'oleh'            => '-',
+                'atas_nama'       => '-',
+                'proof_image_url' => null,
             ]);
 
-        $cashTrans = CashTransaction::whereBetween('created_at', [$start, $end])
+        $cashTrans = CashTransaction::with(['recordedBy:id,name', 'onBehalfOf:id,name'])
+            ->whereNull('order_id')
+            ->whereBetween('created_at', [$start, $end])
             ->get()
-            ->map(fn($t) => [
-                'waktu'       => $t->created_at,
-                'tipe'        => $t->type === 'DEPOSIT' ? 'Pemasukan' : 'Pengeluaran',
-                'jumlah'      => (int) $t->amount,
-                'keterangan'  => $t->description,
-                'kategori'    => $t->type === 'DEPOSIT' ? 'Deposit' : 'Expense',
-                'oleh'        => $t->recordedBy?->name ?? 'Sistem',
-            ]);
+            ->map(function ($t) {
+                $isSetor = $t->type === 'DEPOSIT' && str_contains(strtolower((string) $t->description), 'setor');
+
+                return [
+                    'waktu'           => $t->created_at,
+                    'tipe'            => $isSetor ? 'Setor Kas' : ($t->type === 'DEPOSIT' ? 'Pemasukan' : 'Pengeluaran'),
+                    'jumlah'          => (int) $t->amount,
+                    'keterangan'      => $t->description,
+                    'kategori'        => $isSetor ? 'Setor Kas' : ($t->type === 'DEPOSIT' ? 'Deposit' : 'Expense'),
+                    'oleh'            => $t->recordedBy?->name ?? 'Sistem',
+                    'atas_nama'       => $t->onBehalfOf?->name ?? '-',
+                    'proof_image_url' => $t->proof_image_url,
+                ];
+            });
 
         $semua = $orderTrans->merge($cashTrans)
             ->sortByDesc('waktu')
@@ -115,13 +186,15 @@ class OwnerDashboardController extends Controller
             ],
             'total_transaksi' => $total,
             'data' => $paginated->map(fn($item) => [
-                'waktu'      => $item['waktu']->format('d/m/Y H:i'),
-                'tipe'       => $item['tipe'],
-                'jumlah'     => $item['jumlah'],
-                'keterangan' => $item['keterangan'],
-                'kategori'   => $item['kategori'],
-                'oleh'       => $item['oleh'],
-            ]),
+                'waktu'           => $item['waktu']->format('d/m/Y H:i'),
+                'tipe'            => $item['tipe'],
+                'jumlah'          => $item['jumlah'],
+                'keterangan'      => $item['keterangan'],
+                'kategori'        => $item['kategori'],
+                'oleh'            => $item['oleh'],
+                'atas_nama'       => $item['atas_nama'] ?? '-',
+                'proof_image_url' => $item['proof_image_url'] ?? null,
+            ])->values()->all(),
             'pagination' => [
                 'current_page' => (int) $page,
                 'per_page'     => $perPage,

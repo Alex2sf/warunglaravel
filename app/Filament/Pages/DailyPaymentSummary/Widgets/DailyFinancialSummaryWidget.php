@@ -27,19 +27,23 @@ class DailyFinancialSummaryWidget extends BaseWidget
         $jenis = $filter['jenis_filter'] ?? null;
 
         $incomeQuery = DailyPaymentReport::query();
-        $expenseTxQuery = CashTransaction::where('type', 'EXPENSE');
+        $expenseTxQuery = CashTransaction::where('type', 'EXPENSE')
+            ->whereNull('order_id')
+            ->where('description', 'not like', 'Belanja Stok:%')
+            ->where('description', 'not like', 'Operasional:%');
         $purchaseQuery = CashierPurchase::query();
 
         if ($jenis === 'rentang' && !empty($filter['rentang_tanggal'])) {
-            $dates = explode(' to ', $filter['rentang_tanggal']);
-            $start = trim($dates[0]);
-            $end = trim($dates[1] ?? $dates[0]);
+            [$start, $end] = \App\Filament\Filters\PeriodeFilter::parseDateRange($filter['rentang_tanggal']);
+            if ($start && $end) {
+                $incomeQuery->whereDate('date', '>=', $start)->whereDate('date', '<=', $end);
+                $expenseTxQuery->whereDate('created_at', '>=', $start)->whereDate('created_at', '<=', $end);
+                $purchaseQuery->whereDate('created_at', '>=', $start)->whereDate('created_at', '<=', $end);
 
-            $incomeQuery->whereDate('date', '>=', $start)->whereDate('date', '<=', $end);
-            $expenseTxQuery->whereDate('created_at', '>=', $start)->whereDate('created_at', '<=', $end);
-            $purchaseQuery->whereDate('created_at', '>=', $start)->whereDate('created_at', '<=', $end);
-
-            $periodLabel = \Carbon\Carbon::parse($start)->format('d/m/Y') . ' - ' . \Carbon\Carbon::parse($end)->format('d/m/Y');
+                $periodLabel = \Carbon\Carbon::parse($start)->format('d/m/Y') . ' - ' . \Carbon\Carbon::parse($end)->format('d/m/Y');
+            } else {
+                $periodLabel = 'Rentang Tanggal';
+            }
         } elseif ($jenis === 'tahun' && !empty($filter['tahun'])) {
             $incomeQuery->whereYear('date', $filter['tahun']);
             $expenseTxQuery->whereYear('created_at', $filter['tahun']);
@@ -94,7 +98,7 @@ class DailyFinancialSummaryWidget extends BaseWidget
                 ->color('danger'),
 
             Stat::make('Arus Kas Bersih (Laba)', 'Rp ' . number_format($kasBersih, 0, ',', '.'))
-                ->description($kasBersih >= 0 ? 'Surplus (Pemasukan > Pengeluaran)' : 'Defisit (Pengeluaran > Pemasukan)')
+                ->description($kasBersih >= 0 ? 'Laba operasional ' . $periodLabel . ' (Bukan saldo laci)' : 'Defisit operasional ' . $periodLabel . ' (Bukan saldo laci)')
                 ->descriptionIcon('heroicon-m-banknotes')
                 ->color($kasBersih >= 0 ? 'primary' : 'danger'),
         ];

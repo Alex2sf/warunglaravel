@@ -185,10 +185,22 @@ class OrderController extends Controller
     return response()->json($response);
 }
     public function checkout(OrderCheckoutRequest $request)
-        {
-            \Log::info('CHECKOUT DIPANGGIL BRO! PAYMENT: ' . $request->payment_type);
-            $kasir = $request->user();
-            $response = DB::transaction(function () use ($request, $kasir) {
+    {
+        \Log::info('CHECKOUT DIPANGGIL BRO! PAYMENT: ' . $request->payment_type);
+        $kasir = $request->user();
+
+        // GEMBOK PENUH: Cek apakah laci kasir masih terkunci oleh shift kasir sebelumnya
+        if (in_array($kasir->role, ['kasir', 'admin'])) {
+            $activeShift = \App\Models\CashierShift::where('status', 'OPEN')->latest('id')->first();
+            if ($activeShift && $activeShift->user_id !== $kasir->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Laci kasir masih terkunci! Kasir sebelumnya (' . ($activeShift->user?->name ?? 'Kasir Lain') . ') belum menutup shift. Harap lakukan serah terima shift terlebih dahulu.',
+                ], 403);
+            }
+        }
+
+        $response = DB::transaction(function () use ($request, $kasir) {
                 // LOGIC JADWAL ANTER & ESTIMASI
                 $deliveryScheduledAt = null;
                 $completedTargetAt = null;
@@ -270,6 +282,7 @@ class OrderController extends Controller
                     try {
                         $cash = CashTransaction::create([
                             'type' => CashTransaction::TYPE_DEPOSIT,
+                            'cash_type' => 'CASHIER',
                             'amount' => $order->total_amount,
                             'description' => "Penjualan TUNAI #{$order->order_number}",
                             'recorded_by' => $kasir->id,
@@ -395,6 +408,7 @@ class OrderController extends Controller
 
                     CashTransaction::create([
                         'type'        => CashTransaction::TYPE_EXPENSE,
+                        'cash_type'   => 'CASHIER',
                         'amount'      => $order->total_amount,
                         'description' => "Void/Batal order #{$order->order_number}: {$reason}",
                         'recorded_by' => $request->user()->id,

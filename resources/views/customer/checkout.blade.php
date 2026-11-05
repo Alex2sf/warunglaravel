@@ -28,9 +28,14 @@
     
     <!-- ALAMAT & PENGIRIMAN -->
     <div class="bg-white mt-2 p-4 shadow-sm border-y border-gray-100">
-         <h2 class="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
-            <i class="fas fa-map-marker-alt text-shopee"></i> Alamat Pengiriman
-         </h2>
+         <div class="flex items-center justify-between mb-3">
+             <h2 class="text-sm font-bold text-gray-800 flex items-center gap-2">
+                <i class="fas fa-map-marker-alt text-shopee"></i> Alamat Pengiriman
+             </h2>
+             <button type="button" onclick="clearCustomerForm()" class="text-[11px] text-gray-400 hover:text-red-500 font-medium flex items-center gap-1 transition cursor-pointer" title="Bersihkan dan isi data baru">
+                <i class="fas fa-redo-alt text-[10px]"></i> Bersihkan Form
+             </button>
+         </div>
          
          <!-- Toggle Type -->
          <div class="flex bg-gray-100 p-1 rounded-lg mb-4">
@@ -50,25 +55,56 @@
 
          <!-- Input Fields -->
          <div class="space-y-3">
+             <!-- Nomor WhatsApp (Kunci Utama Auto-fill) -->
              <div>
-                <input type="text" name="name" placeholder="Nama Lengkap" required 
-                    class="w-full text-sm border-b border-gray-200 focus:border-shopee py-2 outline-none transition bg-transparent"
-                    autocomplete="name">
+                 <div class="flex justify-between items-center mb-1">
+                     <label class="text-[11px] font-bold text-gray-700 flex items-center gap-1">
+                         <i class="fab fa-whatsapp text-green-600 text-sm"></i> Nomor WhatsApp
+                     </label>
+                     <span class="text-[10px] text-gray-400">Ketik untuk auto-fill data</span>
+                 </div>
+                 <div class="relative flex items-center">
+                     <input type="tel" name="phone" id="phone_input" placeholder="contoh: 08123456789 atau +62 821..." required 
+                         pattern="[0-9+\s\-\(\)]{9,25}" title="Nomor WhatsApp minimal 9 digit"
+                         value="{{ old('phone') }}"
+                         class="w-full text-sm border-b border-gray-200 focus:border-shopee py-2 outline-none transition bg-transparent pr-8"
+                         autocomplete="tel">
+                     <span id="phone_spinner" class="hidden absolute right-2 text-shopee text-xs">
+                         <i class="fas fa-spinner fa-spin"></i>
+                     </span>
+                     <span id="phone_check" class="hidden absolute right-2 text-green-600 text-sm">
+                         <i class="fas fa-check-circle"></i>
+                     </span>
+                 </div>
+                 <!-- Status Banner Auto-fill -->
+                 <div id="customer_status_banner" class="hidden mt-2 p-2.5 rounded-lg text-xs transition"></div>
              </div>
+
+             <!-- Nama Lengkap -->
              <div>
-                 <input type="tel" name="phone" placeholder="Nomor WhatsApp (contoh: 08123456789)" required 
-                     pattern="[0-9]{9,15}" title="Nomor WhatsApp harus berupa 9 sampai 15 digit angka"
-                     value="{{ old('phone') }}"
+                 <label class="text-[11px] font-bold text-gray-700 flex items-center gap-1 mb-1">
+                     <i class="far fa-user text-gray-500 text-xs"></i> Nama Lengkap
+                 </label>
+                 <input type="text" name="name" id="name_input" placeholder="Nama Anda" required 
+                     value="{{ old('name') }}"
                      class="w-full text-sm border-b border-gray-200 focus:border-shopee py-2 outline-none transition bg-transparent"
-                     autocomplete="tel">
-              </div>
+                     autocomplete="name">
+             </div>
              
+             <!-- Alamat Pengantaran -->
              <div id="address_section">
-                <textarea name="address" id="address_input" placeholder="Alamat Lengkap (Jalan, No Rumah, Patokan)" rows="2" required
-                    class="w-full text-sm border-b border-gray-200 focus:border-shopee py-2 outline-none transition bg-transparent resize-none"></textarea>
-                
-                <input type="url" name="address_link" placeholder="Link Google Maps (Opsional)" 
-                    class="w-full text-sm border-b border-gray-200 focus:border-shopee py-2 outline-none transition bg-transparent">
+                 <label class="text-[11px] font-bold text-gray-700 flex items-center gap-1 mb-1">
+                     <i class="fas fa-home text-gray-500 text-xs"></i> Alamat Pengiriman
+                 </label>
+                 <textarea name="address" id="address_input" placeholder="Alamat Lengkap (Jalan, No Rumah, RT/RW, Patokan)" rows="2" required
+                     class="w-full text-sm border-b border-gray-200 focus:border-shopee py-2 outline-none transition bg-transparent resize-none">{{ old('address') }}</textarea>
+                 
+                 <div class="mt-2">
+                     <label class="text-[10px] text-gray-500 font-semibold block mb-0.5">Link Google Maps (Opsional)</label>
+                     <input type="url" name="address_link" id="address_link_input" placeholder="https://maps.app.goo.gl/..." 
+                         value="{{ old('address_link') }}"
+                         class="w-full text-sm border-b border-gray-200 focus:border-shopee py-2 outline-none transition bg-transparent">
+                 </div>
              </div>
              
              <!-- Scheduled Delivery -->
@@ -236,7 +272,7 @@
          if(checkedPayment) togglePayment(checkedPayment.value);
     });
 
-    // Mencegah double submit order di web browser
+    // Mencegah double submit order di web browser & bersihkan info lama di LocalStorage
     const checkoutForm = document.getElementById('checkoutForm');
     if (checkoutForm) {
         checkoutForm.addEventListener('submit', function(e) {
@@ -246,7 +282,145 @@
                 btn.classList.add('opacity-75', 'cursor-not-allowed');
                 btn.innerHTML = '<i class="fas fa-spinner fa-spin mr-2"></i> Memproses Pesanan...';
             }
+
+            // Bersihkan info pelanggan dari localStorage agar pesanan berikutnya fresh ("kaya baru")
+            try {
+                localStorage.removeItem('depot_phone');
+                localStorage.removeItem('depot_name');
+                localStorage.removeItem('depot_address');
+                localStorage.removeItem('depot_maps');
+            } catch (_) {}
         });
     }
+
+    // =========================================================================
+    // SMART AUTO-FILL BY NOMOR WHATSAPP (PELANGGAN LAMA & BARU)
+    // =========================================================================
+    const phoneInput = document.getElementById('phone_input');
+    const nameInput = document.getElementById('name_input');
+    const addressInput = document.getElementById('address_input');
+    const mapsInput = document.getElementById('address_link_input');
+    const phoneSpinner = document.getElementById('phone_spinner');
+    const phoneCheck = document.getElementById('phone_check');
+    const statusBanner = document.getElementById('customer_status_banner');
+
+    let lastCheckedPhone = '';
+    let lookupTimer = null;
+
+    // Bersihkan isi form agar mulai dari baru
+    function clearCustomerForm() {
+        if (phoneInput) phoneInput.value = '';
+        if (nameInput) nameInput.value = '';
+        if (addressInput) addressInput.value = '';
+        if (mapsInput) mapsInput.value = '';
+        if (phoneSpinner) phoneSpinner.classList.add('hidden');
+        if (phoneCheck) phoneCheck.classList.add('hidden');
+        if (statusBanner) {
+            statusBanner.innerHTML = '';
+            statusBanner.className = 'hidden';
+        }
+        lastCheckedPhone = '';
+        try {
+            localStorage.removeItem('depot_phone');
+            localStorage.removeItem('depot_name');
+            localStorage.removeItem('depot_address');
+            localStorage.removeItem('depot_maps');
+        } catch (_) {}
+        if (phoneInput) phoneInput.focus();
+    }
+
+    async function checkCustomerPhone(phone) {
+        if (!phone) return;
+        const clean = phone.replace(/[^0-9]/g, '');
+        if (clean.length < 8) {
+            if (statusBanner) {
+                statusBanner.innerHTML = '';
+                statusBanner.className = 'hidden';
+            }
+            if (phoneCheck) phoneCheck.classList.add('hidden');
+            return;
+        }
+
+        if (clean === lastCheckedPhone) return;
+        lastCheckedPhone = clean;
+
+        if (phoneSpinner) phoneSpinner.classList.remove('hidden');
+        if (phoneCheck) phoneCheck.classList.add('hidden');
+
+        try {
+            const res = await fetch('/customer/lookup?phone=' + encodeURIComponent(phone.trim()));
+            const data = await res.json();
+
+            if (phoneSpinner) phoneSpinner.classList.add('hidden');
+
+            if (data.success && data.found && data.customer) {
+                // Auto-fill form fields
+                if (nameInput) nameInput.value = data.customer.name || '';
+                if (addressInput) addressInput.value = data.customer.address || '';
+                if (mapsInput && data.customer.address_link) {
+                    mapsInput.value = data.customer.address_link;
+                }
+
+                if (phoneCheck) phoneCheck.classList.remove('hidden');
+
+                if (statusBanner) {
+                    statusBanner.className = 'mt-2 p-2.5 rounded-lg text-xs flex items-center gap-2 bg-green-50 text-green-800 border border-green-200';
+                    statusBanner.innerHTML = '<i class="fas fa-check-circle text-green-600 text-sm shrink-0"></i> <div>Halo <strong>' + (data.customer.name || 'Kak') + '</strong>! Data & alamat Anda otomatis terisi dari pesanan sebelumnya.</div>';
+                    statusBanner.classList.remove('hidden');
+                }
+            } else {
+                if (phoneCheck) phoneCheck.classList.add('hidden');
+                if (statusBanner) {
+                    statusBanner.className = 'mt-2 p-2.5 rounded-lg text-xs flex items-center gap-2 bg-blue-50 text-blue-800 border border-blue-200';
+                    statusBanner.innerHTML = '<i class="fas fa-user-plus text-blue-600 text-sm shrink-0"></i> <div>👋 Halo pelanggan baru! Silakan lengkapi nama & alamat di bawah ini ya.</div>';
+                    statusBanner.classList.remove('hidden');
+                }
+            }
+        } catch (e) {
+            if (phoneSpinner) phoneSpinner.classList.add('hidden');
+        }
+    }
+
+    if (phoneInput) {
+        phoneInput.addEventListener('input', function() {
+            clearTimeout(lookupTimer);
+            const val = this.value;
+            lookupTimer = setTimeout(() => checkCustomerPhone(val), 350);
+        });
+
+        phoneInput.addEventListener('change', function() {
+            clearTimeout(lookupTimer);
+            checkCustomerPhone(this.value);
+        });
+
+        phoneInput.addEventListener('paste', function() {
+            setTimeout(() => checkCustomerPhone(phoneInput.value), 100);
+        });
+
+        phoneInput.addEventListener('blur', function() {
+            clearTimeout(lookupTimer);
+            checkCustomerPhone(this.value);
+        });
+    }
+
+    // Auto-fill dari URL Parameter jika ada (e.g. ?phone=08123... atau ?hp=08123...)
+    // Tidak auto-fill dari localStorage agar form selalu fresh / bersih untuk pesanan baru
+    window.addEventListener('DOMContentLoaded', () => {
+        try {
+            // Bersihkan sisa cache pelanggan lama jika tersimpan di browser
+            localStorage.removeItem('depot_phone');
+            localStorage.removeItem('depot_name');
+            localStorage.removeItem('depot_address');
+            localStorage.removeItem('depot_maps');
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlPhone = urlParams.get('phone') || urlParams.get('hp');
+
+            if (urlPhone && phoneInput) {
+                phoneInput.value = urlPhone;
+                checkCustomerPhone(urlPhone);
+            }
+        } catch (_) {}
+    });
 </script>
 @endsection

@@ -17,6 +17,10 @@ Route::prefix('owner')->name('owner.')->group(function () {
         // BARIS INI WAJIB ADA AGAR STATUS BISA DIUBAH!
         Route::post('/order/{order}/status', [OwnerController::class, 'updateStatus'])
             ->name('order.updateStatus');
+
+        // FITUR BLAST PESANAN BELUM SELESAI
+        Route::get('/incomplete-orders', [OwnerController::class, 'getIncompleteOrders'])->name('incompleteOrders');
+        Route::post('/blast-orders', [OwnerController::class, 'blastOrders'])->name('blastOrders');
     });
 });
 Route::get('/', [CustomerOrderController::class, 'home'])->name('customer.home');
@@ -25,6 +29,7 @@ Route::get('/cart', [CustomerOrderController::class, 'cart'])->name('cart.show')
 Route::post('/update-cart', [CustomerOrderController::class, 'updateCart'])->name('cart.update');
 Route::post('/remove-from-cart/{id}', [CustomerOrderController::class, 'removeFromCart'])->name('cart.remove');
 Route::get('/checkout', [CustomerOrderController::class, 'checkout'])->name('checkout');
+Route::get('/customer/lookup', [CustomerOrderController::class, 'lookupCustomer'])->name('customer.lookup');
 Route::post('/submit-order', [CustomerOrderController::class, 'submitOrder'])->name('order.submit');
 Route::get('/success/{order_number}', [CustomerOrderController::class, 'success'])->name('order.success');
 // Tracking pesanan buat customer

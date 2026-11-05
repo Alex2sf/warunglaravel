@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\OrderProduct;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+use Carbon\Carbon;
 
 class CustomerOrderController extends Controller
 {
@@ -23,7 +24,10 @@ class CustomerOrderController extends Controller
              $query->where('product_type', $request->type);
         }
 
-        $products = $query->with('inventory')->get();
+        $products = $query->with('inventory')
+            ->orderByDesc('is_favorite')
+            ->orderBy('name')
+            ->get();
         $productTypes = \App\Models\ProductType::where('is_active', true)->get();
         return view('customer.home', compact('products', 'productTypes'));
     }
@@ -110,11 +114,93 @@ class CustomerOrderController extends Controller
         return view('customer.checkout', compact('cart', 'subtotal'));
     }
 
+    /**
+     * Cari customer secara fleksibel berdasarkan nomor telepon
+     * Mendukung variasi: 08..., 62..., +62..., pemisah spasi, strip (-), dll.
+     */
+    private function findCustomerByPhone(string $rawPhone): ?Customer
+    {
+        $clean = preg_replace('/[^0-9]/', '', $rawPhone);
+        if (strlen($clean) < 7) {
+            return null;
+        }
+
+        // Ekstrak nomor inti tanpa kode negara 62 atau awalan 0
+        $core = $clean;
+        if (str_starts_with($core, '62')) {
+            $core = substr($core, 2);
+        } elseif (str_starts_with($core, '0')) {
+            $core = substr($core, 1);
+        }
+
+        if (strlen($core) < 6) {
+            return null;
+        }
+
+        // 1. Cepat: Cek variasi umum dengan indexed query
+        $candidates = array_filter(array_unique([
+            $rawPhone,
+            $clean,
+            '0' . $core,
+            '62' . $core,
+            '+62' . $core,
+            '+62 ' . $core,
+        ]));
+
+        $customer = Customer::whereIn('phone_number', $candidates)->first();
+        if ($customer) {
+            return $customer;
+        }
+
+        // 2. Fallback: Sanitasi kolom database (menghilangkan spasi, strip, +, titik)
+        return Customer::where(function ($query) use ($core) {
+            $query->whereRaw("REPLACE(REPLACE(REPLACE(REPLACE(phone_number, ' ', ''), '-', ''), '+', ''), '.', '') = ?", ['0' . $core])
+                  ->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(phone_number, ' ', ''), '-', ''), '+', ''), '.', '') = ?", ['62' . $core])
+                  ->orWhereRaw("REPLACE(REPLACE(REPLACE(REPLACE(phone_number, ' ', ''), '-', ''), '+', ''), '.', '') = ?", [$core]);
+        })->first();
+    }
+
+    /**
+     * API Lookup Customer berdasarkan nomor telepon untuk auto-fill di web checkout
+     */
+    public function lookupCustomer(Request $request)
+    {
+        $phone = trim($request->phone ?? '');
+        $customer = $this->findCustomerByPhone($phone);
+
+        if (!$customer) {
+            return response()->json([
+                'success' => true,
+                'found'   => false,
+                'message' => 'Pelanggan baru',
+            ]);
+        }
+
+        // Cari pesanan terakhir untuk mengambil link maps (jika ada)
+        $lastOrder = Order::where('customer_id', $customer->id)
+            ->whereNotNull('address_link')
+            ->where('address_link', '!=', '')
+            ->latest('id')
+            ->first();
+
+        return response()->json([
+            'success'  => true,
+            'found'    => true,
+            'customer' => [
+                'id'           => $customer->id,
+                'name'         => $customer->name,
+                'phone_number' => $customer->phone_number,
+                'address'      => $customer->address,
+                'address_link' => $lastOrder?->address_link ?? '',
+            ],
+        ]);
+    }
+
     public function submitOrder(Request $request)
     {
         $request->validate([
             'name' => 'required|string|max:255',
-            'phone' => 'required|string|min:9|max:20',
+            'phone' => 'required|string|min:9|max:25',
             'address' => $request->order_type === 'DELIVERY' ? 'required|string|max:500' : 'nullable|string',
             'notes' => 'nullable|string|max:500',
             'order_type' => 'required|in:DELIVERY,SELF_PICKUP',
@@ -137,25 +223,48 @@ class CustomerOrderController extends Controller
         $subtotal = collect($cart)->sum(fn($i) => $i['price'] * $i['qty']);
         $total = $subtotal; // bisa tambah ongkir nanti
 
-        // 1. Buat atau cari customer
-        $customer = Customer::firstOrCreate(
-            ['phone_number' => $request->phone],
-            ['name' => $request->name, 'address' => $request->address]
-        );
+        // 1. Buat atau cari & update customer
+        $cleanPhone = preg_replace('/[^0-9]/', '', $request->phone);
+        $core = $cleanPhone;
+        if (str_starts_with($core, '62')) {
+            $core = substr($core, 2);
+        } elseif (str_starts_with($core, '0')) {
+            $core = substr($core, 1);
+        }
+        $standardPhone = !empty($core) ? ('0' . $core) : $cleanPhone;
 
-        // 2. Buat order
-       $order = Order::create([
-        'order_number'     => strtoupper(Str::random(12)),
-        'customer_id'      => $customer->id,
-        'status'           => 'DRAFT',
-        'order_type'       => $request->order_type,
-        'payment_type'     => $request->payment_type,
-        'delivery_address' => $request->order_type === 'DELIVERY' ? $request->address : null,
-        'address_link'     => $request->address_link,
-        'delivery_scheduled_at' => $request->delivery_scheduled_at,
-        'subtotal'         => $subtotal,
-        'total_amount'     => $total,
-        'notes'            => $request->notes,
+        $customer = $this->findCustomerByPhone($request->phone);
+        if ($customer) {
+            $customer->update([
+                'name'    => $request->name,
+                'address' => $request->address ?? $customer->address,
+            ]);
+        } else {
+            $customer = Customer::create([
+                'phone_number' => $standardPhone,
+                'name'         => $request->name,
+                'address'      => $request->address,
+            ]);
+        }
+
+        // 2. Buat order: Jika DELIVERY langsung otomatis berstatus READY agar kurir bisa langsung pickup tanpa kasir
+        $isDelivery = $request->order_type === 'DELIVERY';
+        $now = Carbon::now();
+        $completedTargetAt = $isDelivery ? $now->copy()->addMinutes(30) : null;
+
+        $order = Order::create([
+            'order_number'          => strtoupper(Str::random(12)),
+            'customer_id'           => $customer->id,
+            'status'                => $isDelivery ? 'READY' : 'DRAFT',
+            'order_type'            => $request->order_type,
+            'payment_type'          => $request->payment_type,
+            'delivery_address'      => $isDelivery ? $request->address : null,
+            'address_link'          => $request->address_link,
+            'completed_target_at'   => $completedTargetAt,
+            'ready_time'            => $isDelivery ? $now : null,
+            'subtotal'              => $subtotal,
+            'total_amount'          => $total,
+            'notes'                 => $request->notes,
         ]);
 
         // 3. Simpan item ke pivot
