@@ -1,6 +1,6 @@
 {
   "mode": "frontend",
-  "projectName": "HydroExpert Laravel",
+  "projectName": "Warung Laravel Filament",
   "projectPath": ".",
   "baseUrl": "http://127.0.0.1:8000",
   "analysisSource": "blackbox",
@@ -14,13 +14,21 @@
     "auth": {
       "strategy": "form",
       "loginUrl": "/admin/login",
-      "username": "admin@gmail.com",
-      "password": "admin"
+      "username": "admin@admin.com",
+      "password": "password"
+    },
+    "selectors": {
+      "loginUsername": "page.get_by_label(\"Email address*\").first",
+      "loginPassword": "page.get_by_label(\"Password*\").first",
+      "loginSubmit": "page.get_by_role(\"button\", name=\"Sign in\").first"
     },
     "crawl": {
       "maxDepth": 3,
-      "maxRoutes": 25,
-      "safeMode": true
+      "maxRoutes": 30,
+      "safeMode": true,
+      "include": [
+        "/admin"
+      ]
     },
     "testGeneration": {
       "includeSmoke": true,
@@ -37,8 +45,9 @@
     "enabled": true,
     "apiUrl": "http://localhost:4000",
     "token": "sk_suitest_L5gW9m4DM0REF_H0loRF0L28A0nDoYUDz5FfEPPsy1g",
+    "workspaceId": "itu2twbgk975d1bx3vusiwmy",
     "suiteName": "Filament Admin Blackbox",
     "recreateProject": true,
-    "projectId": "n16b8858nt27gjgyxk13zgcf"
+    "projectId": "bt12rjwwzooedkxnjfcx5c2m"
   }
 }
