@@ -38,11 +38,19 @@ class CustomerController extends Controller
                     'message' => 'Pelanggan lama ditemukan & alamat diperbarui.'
                 ]);
             } else {
-                // Gagal: Karena dianggap pelanggan baru, wajib isi No HP
+                // Di Warung: Pembeli baru boleh tanpa nomor HP (opsional)
+                $newCustomer = Customer::create([
+                    'name' => $name,
+                    'phone_number' => null,
+                    'address' => $request->address ?? '-',
+                ]);
+
                 return response()->json([
-                    'success' => false,
-                    'message' => 'Pelanggan baru? Wajib isi Nomor HP!'
-                ], 422); 
+                    'success' => true,
+                    'customer' => $newCustomer,
+                    'is_existing' => false,
+                    'message' => 'Pelanggan baru berhasil dibuat.'
+                ]);
             }
         }
 

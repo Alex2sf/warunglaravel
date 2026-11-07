@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\OrderCheckoutRequest;
 use App\Models\Order;
+use App\Models\Customer;
 use App\Models\Product;
 use App\Models\OrderDeliveryProof;
 use App\Models\Inventory;
@@ -214,9 +215,31 @@ class OrderController extends Controller
                     $completedTargetAt = $deliveryScheduledAt->copy()->addMinutes($prepMinutes);
                 }
 
+                // RESOLVE CUSTOMER ID (Default Pelanggan Umum untuk Warung)
+                $customerId = $request->customer_id;
+                if (!$customerId) {
+                    $customerName = trim($request->customer_name ?? '');
+                    if (!empty($customerName) && $customerName !== 'Pelanggan Umum') {
+                        $cust = Customer::firstOrCreate(
+                            ['name' => $customerName],
+                            [
+                                'phone_number' => $request->customer_phone ? trim($request->customer_phone) : null,
+                                'address' => $request->delivery_address ?? '-',
+                            ]
+                        );
+                        $customerId = $cust->id;
+                    } else {
+                        $defaultCustomer = Customer::firstOrCreate(
+                            ['name' => 'Pelanggan Umum'],
+                            ['phone_number' => null, 'address' => '-']
+                        );
+                        $customerId = $defaultCustomer->id;
+                    }
+                }
+
                 // 1. Buat order
                 $order = Order::create([
-                    'customer_id' => $request->customer_id,
+                    'customer_id' => $customerId,
                     'staff_id' => $kasir->id,
                     'order_type' => $request->order_type,
                     'payment_type' => $request->payment_type,
@@ -233,8 +256,9 @@ class OrderController extends Controller
                 ]);
 
                 // SYNC ALAMAT KE CUSTOMER (REQUESTED FEATURE)
-                if ($request->order_type === 'DELIVERY' && $request->filled('delivery_address')) {
-                    \App\Models\Customer::where('id', $request->customer_id)
+                if ($request->order_type === 'DELIVERY' && $request->filled('delivery_address') && $customerId) {
+                    \App\Models\Customer::where('id', $customerId)
+                        ->where('name', '!=', 'Pelanggan Umum')
                         ->update(['address' => $request->delivery_address]);
                 }
     
