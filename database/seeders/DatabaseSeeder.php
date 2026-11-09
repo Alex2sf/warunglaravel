@@ -51,5 +51,8 @@ class DatabaseSeeder extends Seeder
             ]
         );
         $fadli->syncRoles([$roleOwner, $roleSuperAdmin, $rolePanelUser]);
+
+        // Seed Saldo Awal Kas Besar (100 Juta)
+        $this->call(MainCashSeeder::class);
     }
 }
