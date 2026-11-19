@@ -190,14 +190,8 @@ class StockProcurementController extends Controller
                 $procurement->update(['notes' => $request->notes]);
             }
 
-            // Kumpulkan ID produk yang diajukan kali ini
-            $submittedProductIds = collect($request->items)->pluck('product_id')->toArray();
-
-            // Bersihkan barang-barang lama di nota pending ini yang tidak diajukan lagi (overwrite / sync)
-            StockProcurementItem::where('procurement_id', $procurement->id)
-                ->whereNotIn('product_id', $submittedProductIds)
-                ->delete();
-
+            // Pengajuan susulan di hari yang sama DITAMBAHKAN ke nota pending ini;
+            // barang yang sudah ada tidak boleh terhapus.
             foreach ($request->items as $itemData) {
                 $product = Product::with('inventory')->findOrFail($itemData['product_id']);
                 $currentStock = $product->inventory?->quantity ?? 0;
@@ -211,7 +205,9 @@ class StockProcurementController extends Controller
                     ->first();
 
                 if ($existingItem) {
-                    // Otomatis diperbarui ke kuantitas TERAKHIR yang diajukan kasir
+                    // Barang sama diajukan lagi: jumlahnya ditambahkan ke jumlah sebelumnya
+                    $quantity += (int) $existingItem->quantity_requested;
+                    $subtotal = $quantity * $unitCogs;
                     $existingItem->update([
                         'current_stock'       => $currentStock,
                         'quantity_requested'  => $quantity,
